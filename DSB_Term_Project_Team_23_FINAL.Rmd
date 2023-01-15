@@ -1,0 +1,851 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+
+
+
+```{r}
+
+# Setting up working directory 
+
+getwd()
+setwd("C:/Users/sarahguo/Desktop/Duke/Fall 1/Data Science for Business/Project")
+getwd()
+
+
+```
+
+
+```{r}
+
+##Loading functions
+
+source("DataAnalyticsFunctions.R")
+source("PerformanceCurves.R")
+
+```
+
+
+```{r}
+
+##Loading all libraries used
+
+options(warn=-1)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(corrplot)
+library(wordcloud)
+library(RColorBrewer)
+library(wordcloud2)
+library(tm)
+library(SnowballC)
+library(glmnet)
+library(tidyr)
+library(tree)
+library(factoextra)
+library(cluster)
+library(ggpubr)
+
+```
+
+```{r}
+
+
+#Loading datasets
+
+#The data is present in 6 different files having songs of each decade
+#We merged the data into one table
+
+spotify_60 <- read.csv("dataset-of-60s.csv")
+spotify_70 <- read.csv("dataset-of-70s.csv")
+spotify_80 <- read.csv("dataset-of-80s.csv")
+spotify_90 <- read.csv("dataset-of-90s.csv")
+spotify_00 <- read.csv("dataset-of-00s.csv")
+spotify_10 <- read.csv("dataset-of-10s.csv")
+
+
+spotify_60 <- spotify_60 %>% mutate("year" = 1960)
+spotify_70 <- spotify_70 %>% mutate("year" = 1970)
+spotify_80 <- spotify_80 %>% mutate("year" = 1980)
+spotify_90 <- spotify_90 %>% mutate("year" = 1990)
+spotify_00 <- spotify_00 %>% mutate("year" = 2000)
+spotify_10 <- spotify_10 %>% mutate("year" = 2010)
+
+
+##Final dataset
+spotify_decade_data <- rbind(spotify_60, spotify_70, spotify_80, spotify_90, spotify_00, spotify_10)
+str(spotify_decade_data)
+summary(spotify_decade_data)
+
+
+
+```
+
+```{r}
+
+#Exploratory Data Analysis
+colSums(is.na(spotify_decade_data))
+#No missing values
+
+boxplot(spotify_decade_data$danceability)
+boxplot(spotify_decade_data$energy)
+boxplot(spotify_decade_data$key)
+boxplot(spotify_decade_data$loudness)
+boxplot(spotify_decade_data$mode)
+boxplot(spotify_decade_data$speechiness)
+boxplot(spotify_decade_data$acousticness)
+boxplot(spotify_decade_data$instrumentalness)
+boxplot(spotify_decade_data$liveness)
+boxplot(spotify_decade_data$valence)
+boxplot(spotify_decade_data$tempo)
+boxplot(spotify_decade_data$duration_ms)
+boxplot(spotify_decade_data$time_signature)
+boxplot(spotify_decade_data$chorus_hit)
+boxplot(spotify_decade_data$target)
+
+```
+
+
+
+```{r}
+
+##Creating a word cloud based on song names
+
+temp <- spotify_decade_data %>% filter(target == 1)
+nrow(temp)
+
+song_name <- spotify_decade_data$track
+#song_name <- temp$track
+corpus <- Corpus(VectorSource(song_name))
+
+#Conversion to Lowercase
+corpus = tm_map(corpus, PlainTextDocument)
+corpus = tm_map(corpus, tolower)
+ 
+#Removing Punctuation
+corpus = tm_map(corpus, removePunctuation)
+
+#Remove stop words
+corpus = tm_map(corpus, removeWords, stopwords("english"))
+
+#Stemming
+corpus = tm_map(corpus, stemDocument)
+ 
+#Eliminate white spaces
+corpus = tm_map(corpus, stripWhitespace)
+
+#Remove numbers
+corpus = tm_map(corpus, removeNumbers)
+
+wordcloud(corpus, max.words = 100, random.color = FALSE , random.order=FALSE, colors=brewer.pal(8, "Dark2"))
+
+
+```
+
+
+```{r}
+
+##Plotting correlation plot for all song features
+
+spotify_decade_subset <- spotify_decade_data %>% select(-c(track, artist, uri))
+str(spotify_decade_subset)
+
+corrplot(cor(spotify_decade_subset), 
+         method = 'shade', 
+         order = "AOE",
+         diag = FALSE,
+         type = "lower",
+         addCoef.col = 1, 
+         number.cex = 0.75, 
+         tl.cex = 0.75)
+
+
+```
+
+```{r}
+
+## Analyzing sections, energy, loudness, danceability
+
+## Sections: The number of sections the particular track has. 
+## This feature was extracted from the data recieved by the API call for Audio Analysis of that particular track.
+
+sections_df <- spotify_decade_data %>% 
+  group_by(sections) %>% 
+  summarize(n= n(),
+            perc_songs = n()/nrow(spotify_decade_data)*100,
+            hit_songs = sum(target),
+            perc_hit = sum(target)/n())
+sections_df
+
+sections_df <- sections_df %>% filter(perc_songs > 0.05)
+relevant_section <- sections_df$sections
+
+temp <- spotify_decade_data %>% select(sections, duration_ms) 
+temp <- temp[temp$sections %in% relevant_section,]
+temp$sections <- as.factor(temp$sections)
+unique(temp$sections)
+str(temp)
+
+ggplot(temp, aes(x = sections, y = duration_ms, color = sections)) + 
+  geom_boxplot(outlier.color = "black") + 
+  theme_bw() + 
+  labs(x = "Sections", y = "Song Duraction (milliseconds)", title = "Relationship between Sections and Song Duration")
+
+```
+
+
+
+
+```{r}
+
+mode_df <- spotify_decade_data %>% 
+  group_by(mode) %>% 
+  summarize(n= n(),
+          hit_songs = sum(target),
+          perc_hit = sum(target)/n())
+mode_df
+
+temp <- spotify_decade_data %>% select(c(mode, loudness))
+temp$mode <- as.factor(temp$mode)
+
+ggplot(temp, aes(x = mode, y = loudness, color = mode)) + 
+  geom_boxplot(outlier.color = "black") + 
+  theme_bw() + 
+  labs(x = "Mode", y = "Song Loudness", title = "Relationship between Mode and Song Loudness")
+
+```
+
+
+
+
+```{r}
+
+
+time_signature_df <- spotify_decade_data %>% 
+  group_by(time_signature, target) %>% 
+  summarize(n= n(),
+            songs = n()) %>% 
+  mutate(perc_songs = songs/sum(songs)*100)
+time_signature_df
+
+
+ggplot(time_signature_df, aes(x = factor(time_signature), 
+                              y = perc_songs, 
+                              fill = factor(target))) + 
+  geom_bar(stat = "identity") + 
+  theme_bw() + 
+  labs(x = "Time Signature", 
+       y = "Percentage of Songs", 
+       title = "Percentage of Hit and Flop Songs by Time Signature") +
+    scale_fill_manual(values=c('red', 'green'))
+#  scale_fill_discrete(labels=c('Flop Song', 'Hit Song'))
+
+
+```
+
+
+
+
+```{r}
+
+key_df <- spotify_decade_data %>% 
+  group_by(key) %>% 
+  summarize(n= n(),
+          hit_songs = sum(target),
+          perc_hit = sum(target)/n())
+key_df
+
+temp <- spotify_decade_data %>% select(key, danceability)
+temp$key <- as.factor(temp$key)
+str(temp)
+
+ggplot(temp, aes(x = key, y = danceability, color = key)) + 
+  geom_boxplot(outlier.color = "black") + 
+  theme_bw() + 
+  labs(x = "Key", y = "Danceability", title = "Relationship between Key and Danceability")
+
+
+```
+
+
+
+
+```{r}
+
+ggplot(spotify_decade_data, aes(x = energy, y = acousticness)) + 
+  geom_point(size = 0.1 , color = "blue") + 
+  ylim(c(0,1)) +
+  geom_smooth(linetype = "dashed", colour = "red") +
+  labs(title = "Relationship between song energy and song acousticness")
+
+
+
+ggplot(spotify_decade_data, aes(x = energy, y = loudness)) + 
+  geom_point(size = 0.1 , color = "blue") +
+  geom_smooth(linetype = "dashed", colour = "red") +
+  labs(title = "Relationship between song energy and song loudness")
+
+
+
+
+ggplot(spotify_decade_data, aes(x = danceability, y = valence)) + 
+  geom_point(size = 0.1 , color = "blue") +
+  geom_smooth(linetype = "dashed", colour = "red") +
+  labs(title = "Relationship between song danceability and song valence")
+
+
+
+ggplot(spotify_decade_data, aes(x = loudness, y = acousticness)) + 
+  geom_point(size = 0.1 , color = "blue") +
+  labs(title = "Relationship between song loudness and song acousticness")
+
+
+```
+
+
+
+
+```{r}
+
+## Analysis by Decade
+
+decade_df <- spotify_decade_data %>%  
+  group_by(year) %>% 
+  summarise(n =n(),
+            perc_hit = sum(target))
+decade_df
+
+## All decades have 50% flop songs and 50% hit songs
+
+
+```
+
+
+
+
+```{r}
+
+## Classification Models
+
+str(spotify_decade_subset)
+data <- spotify_decade_subset
+str(data)
+
+
+data$target <- ifelse(data$target == 1, "Yes", "No")
+data$target <- as.factor(data$target)
+str(data)
+mean(data$target == "Yes")
+
+
+
+### Because we will be concerned with providing a discount
+library(glmnet)
+
+#### Lets run Lasso
+#### First lets set up the data for it
+#### the features need to be a matrix ([,-1] removes the first column which is the intercept)
+
+Mx<- model.matrix(target ~ .^2, data=data)[,-1]
+My<- data$target == "Yes"
+lasso <- glmnet(Mx,My, family="binomial")
+lassoCV <- cv.glmnet(Mx,My, family="binomial")
+
+plot(lasso)
+plot(lassoCV)
+
+num.features <- ncol(Mx)
+num.n <- nrow(Mx)
+num.target <- sum(My)
+w <- (num.target/num.n)*(1-(num.target/num.n))
+lambda.theory <- sqrt(w*log(num.features/0.05)/num.n)
+lassoTheory <- glmnet(Mx,My, family="binomial",lambda = lambda.theory)
+summary(lassoTheory)
+support(lassoTheory$beta)
+
+features.min <- support(lasso$beta[,which.min(lassoCV$cvm)])
+features.min <- support(lassoTheory$beta)
+length(features.min)
+data.min <- data.frame(Mx[,features.min],My)
+
+colnames(data.min)
+
+
+###
+### prediction is a probability score
+### we convert to 1 or 0 via prediction > threshold
+PerformanceMeasure <- function(actual, prediction, threshold=.5) {
+  1-mean(abs( (prediction- actual) ) )  
+}
+
+
+PerformanceMeasure2 <- function(actual, prediction, threshold=.5) {
+  R2(y=actual, pred=prediction, family="binomial")
+}
+
+n <- nrow(data)
+nfold <- 10
+OOS <- data.frame(m.lr=rep(NA,nfold), 
+                  m.lr.l=rep(NA,nfold), 
+                  m.lr.pl=rep(NA,nfold), 
+                  m.tree=rep(NA,nfold), 
+                  m.average=rep(NA,nfold), 
+                  m.null=rep(NA,nfold))
+
+OOS.R2 <- data.frame(m.lr=rep(NA,nfold), 
+                  m.lr.l=rep(NA,nfold), 
+                  m.lr.pl=rep(NA,nfold), 
+                  m.tree=rep(NA,nfold), 
+                  m.average=rep(NA,nfold), 
+                  m.null=rep(NA,nfold))
+
+OOS.TP <- data.frame(m.lr=rep(NA,nfold), 
+                  m.lr.l=rep(NA,nfold), 
+                  m.lr.pl=rep(NA,nfold), 
+                  m.tree=rep(NA,nfold), 
+                  m.average=rep(NA,nfold), 
+                  m.null=rep(NA,nfold)) 
+
+OOS.TN <- data.frame(m.lr=rep(NA,nfold), 
+                  m.lr.l=rep(NA,nfold), 
+                  m.lr.pl=rep(NA,nfold), 
+                  m.tree=rep(NA,nfold), 
+                  m.average=rep(NA,nfold), 
+                  m.null=rep(NA,nfold)) 
+
+OOS.FP <- data.frame(m.lr=rep(NA,nfold), 
+                  m.lr.l=rep(NA,nfold), 
+                  m.lr.pl=rep(NA,nfold), 
+                  m.tree=rep(NA,nfold), 
+                  m.average=rep(NA,nfold), 
+                  m.null=rep(NA,nfold)) 
+
+OOS.FN <- data.frame(m.lr=rep(NA,nfold), 
+                  m.lr.l=rep(NA,nfold), 
+                  m.lr.pl=rep(NA,nfold), 
+                  m.tree=rep(NA,nfold), 
+                  m.average=rep(NA,nfold), 
+                  m.null=rep(NA,nfold)) 
+
+#names(OOS)<- c("Logistic Regression", "Lasso on LR with Interactions", "Post Lasso on LR with Interactions", "Classification Tree", "Average of Models")
+foldid <- rep(1:nfold,each=ceiling(n/nfold))[sample(1:n)]
+val <- 0.5
+
+
+for(k in 1:nfold){ 
+  train <- which(foldid!=k) # train on all but fold `k'
+  
+  ### Logistic regression
+  m.lr <-glm(target~., data=data, subset=train,family="binomial")
+  pred.lr <- predict(m.lr, newdata=data[-train,], type="response")
+  OOS$m.lr[k] <- PerformanceMeasure(actual=My[-train], pred=pred.lr)
+  OOS.R2$m.lr[k] <- PerformanceMeasure2(actual=My[-train], pred=pred.lr)
+  values <- FPR_TPR( (pred.lr >= val) , My[-train])
+  OOS.TP$m.lr[k] <- values$TP
+  OOS.TN$m.lr[k] <- values$TN
+  OOS.FP$m.lr[k] <- values$FP
+  OOS.FN$m.lr[k] <- values$FN
+  
+  ### the Post Lasso Estimates
+  m.lr.pl <- glm(My~., data=data.min, subset=train, family="binomial")
+  pred.lr.pl <- predict(m.lr.pl, newdata=data.min[-train,], type="response")
+  OOS$m.lr.pl[k] <- PerformanceMeasure(actual=My[-train], prediction=pred.lr.pl)
+  OOS.R2$m.lr.pl[k] <- PerformanceMeasure2(actual=My[-train], prediction=pred.lr.pl)
+  values <- FPR_TPR( (pred.lr.pl >= val) , My[-train])
+  OOS.TP$m.lr.pl[k] <- values$TP
+  OOS.TN$m.lr.pl[k] <- values$TN
+  OOS.FP$m.lr.pl[k] <- values$FP
+  OOS.FN$m.lr.pl[k] <- values$FN
+  
+  ### the Lasso estimates  
+  m.lr.l  <- glmnet(Mx[train,],My[train], family="binomial",lambda = lassoCV$lambda.1se)
+  pred.lr.l <- predict(m.lr.l, newx=Mx[-train,], type="response")
+  OOS$m.lr.l[k] <- PerformanceMeasure(actual=My[-train], prediction=pred.lr.l)
+  OOS.R2$m.lr.l[k] <- PerformanceMeasure2(actual=My[-train], prediction=pred.lr.l)
+  values <- FPR_TPR( (pred.lr.l >= val) , My[-train])
+  OOS.TP$m.lr.l[k] <- values$TP
+  OOS.TN$m.lr.l[k] <- values$TN
+  OOS.FP$m.lr.l[k] <- values$FP
+  OOS.FN$m.lr.l[k] <- values$FN
+
+  ### the classification tree
+  m.tree <- tree(target~ ., data=data, subset=train) 
+  pred.tree <- predict(m.tree, newdata=data[-train,], type="vector")
+  pred.tree <- pred.tree[,2]
+  OOS$m.tree[k] <- PerformanceMeasure(actual=My[-train], prediction=pred.tree)
+  OOS.R2$m.tree[k] <- PerformanceMeasure2(actual=My[-train], prediction=pred.tree)
+  values <- FPR_TPR( (pred.tree >= val) , My[-train])
+  OOS.TP$m.tree[k] <- values$TP
+  OOS.TN$m.tree[k] <- values$TN
+  OOS.FP$m.tree[k] <- values$FP
+  OOS.FN$m.tree[k] <- values$FN
+  
+  #Null model
+  m.null <-glm(target=="Yes"~1, data=data, subset=train,family="binomial")
+  pred.null <- predict(m.null, newdata=data[-train,], type="response")
+  values <- FPR_TPR( (pred.null >= val) , My[-train] )
+  OOS.R2$m.null[k] <- PerformanceMeasure2(actual=My[-train], prediction=pred.null)
+  OOS$m.null[k] <- values$ACC
+  OOS.TP$m.null[k] <- values$TP
+  OOS.TN$m.null[k] <- values$TN
+  OOS.FP$m.null[k] <- values$FP
+  OOS.FN$m.null[k] <- values$FN
+  
+  
+  pred.m.average <- rowMeans(cbind(pred.tree, pred.lr.l, pred.lr.pl, pred.lr, pred.lr))
+  OOS$m.average[k] <- PerformanceMeasure(actual=My[-train], prediction=pred.m.average)
+  OOS.R2$m.average[k] <- PerformanceMeasure2(actual=My[-train], prediction=pred.m.average)
+  
+  print(paste("Iteration",k,"of",nfold,"completed"))
+  
+}    
+
+
+## Plotting the average accuracy
+par(mar=c(7,5,.5,1)+0.3)
+barplot(colMeans(OOS), 
+        las=2,
+        xpd=FALSE , 
+        xlab="", 
+        ylim=c(0,1), 
+        ylab = "")
+
+model.names <- c("Logistic", "Lasso", "Post-Lasso", "Tree", "Average", "Null")
+
+
+write.csv(OOS, file = "OOS_Accuracy.csv", row.names = FALSE, col.names = TRUE)
+write.csv(OOS.R2, file = "OOS_R2.csv", row.names = FALSE, col.names = TRUE)
+
+barplot(colMeans(OOS), 
+        las=2,
+        xpd=FALSE , 
+        names.arg = model.names,
+        cex.names = 0.75,
+        xlab="", ylim=c(0,0.75), 
+        ylab = bquote("Average Out of Sample Performance"), 
+        main = "Average OOS Performance Post 10-fold Cross-Validations")
+
+
+
+barplot(colMeans(OOS.R2), 
+        las=2,
+        xpd=FALSE , 
+        names.arg = model.names,
+        cex.names = 0.75,
+        xlab="", ylim=c(0,0.5), 
+        ylab = bquote("Average Out of Sample R-Squared"), 
+        main = "Average OOS R-Squared Post 10-fold Cross-Validations")
+
+
+
+## Plotting k-fold accuracy
+barplot(t(as.matrix(OOS)), 
+        beside=TRUE, 
+        legend=TRUE, 
+        args.legend=c(xjust=1, yjust=0.5),
+        ylab= bquote( "Out of Sample Accuracy"), 
+        xlab="Fold", names.arg = c(1:10),
+        main = "OOS Accuracy by Fold")
+
+
+save.image()
+
+```
+
+
+
+
+```{r}
+
+### Plot FPR and TPR
+plot( c( 0, 1 ), c(0, 1), type="n", xlim=c(0,1), ylim=c(0,1), bty="n", xlab = "False positive rate", ylab="True positive rate")
+lines(c(0,1),c(0,1), lty=2)
+#
+TPR = sum(OOS.TP$m.tree)/(sum(OOS.TP$m.tree)+sum(OOS.FN$m.tree))  
+FPR = sum(OOS.FP$m.tree)/(sum(OOS.FP$m.tree)+sum(OOS.TN$m.tree))  
+text( FPR, TPR, labels=c("m.tree"))
+points( FPR , TPR )
+#
+TPR = sum(OOS.TP$m.lr)/(sum(OOS.TP$m.lr)+sum(OOS.FN$m.lr))  
+FPR = sum(OOS.FP$m.lr)/(sum(OOS.FP$m.lr)+sum(OOS.TN$m.lr))  
+text( FPR, TPR, labels=c("Logistic Regression"))
+points( FPR , TPR )
+
+#
+TPR = sum(OOS.TP$m.lr.l)/(sum(OOS.TP$m.lr.pl)+sum(OOS.FN$m.lr.l))  
+FPR = sum(OOS.FP$m.lr.l)/(sum(OOS.FP$m.lr.l)+sum(OOS.TN$m.lr.l))  
+text( FPR, TPR, labels=c("Lasso"))
+points( FPR , TPR )
+
+#
+TPR = sum(OOS.TP$m.lr.pl)/(sum(OOS.TP$m.lr.pl)+sum(OOS.FN$m.lr.pl))  
+FPR = sum(OOS.FP$m.lr.pl)/(sum(OOS.FP$m.lr.pl)+sum(OOS.TN$m.lr.pl))  
+text( FPR, TPR, labels=c("Post Lasso"))
+points( FPR , TPR )
+
+
+```
+
+
+
+```{r}
+##Final Training of model and predictions
+
+train <- which(foldid!=1)
+### the Post Lasso Estimates
+m.lr.l  <- glmnet(Mx,My, family="binomial",lambda = lassoCV$lambda.1se)
+df.beta.lasso <- m.lr.l$beta
+
+#Using glmnet kfold validation process to guage lambda
+cvfit <- cv.glmnet(Mx,My)
+plot(cvfit)
+#lambda min
+cvfit$lambda.min
+# lambda min: 4.294849e-05
+cvfit$lambda.1se
+#lambda optimized 1se: 0.0006377714
+coef(cvfit, s = "lambda.min")
+coef(cvfit, s = "lambda.1se")
+
+coeffs <- coef(m.lr.l, s = "lambda.1se") 
+coeffs.dt <- data.frame(name = coeffs@Dimnames[[1]][coeffs@i + 1], coefficient = coeffs@x) 
+
+# reorder the variables in term of coefficients
+coeffs.dt[order(coeffs.dt$coefficient, decreasing = T),]
+coeffs.dt$abs_beta <- abs(coeffs.dt$coefficient)
+coeffs.dt[order(coeffs.dt$abs_beta, decreasing = T),]
+
+write.csv(coeffs.dt, file = "Lasso Feature.csv", row.names = TRUE)
+predict(cvfit, newx = Mx, s = "lambda.1se", type = "response")
+
+
+pred.lr.l <- predict(m.lr.l, newx=Mx, type="response")
+hist(pred.lr.l)
+
+par(mar=c(1.5,1.5,1.5,1.5))
+par(mai=c(1.5,1.5,1.5,1.5))
+hist(pred.lr.l, breaks = 40, main="Predictions for Lasso")
+
+roccurve <-  roc(p=pred.lr.l, y=My, bty="n")
+roccurve_m.lr.l <- roccurve
+plot(roccurve,  ylim=c(0,1), xlim=c(0,1), ylab="True positive rate", xlab="False positive rate",type="l", main="ROC Curve")
+```
+
+
+
+
+```{r}
+
+
+##Analyzing the threshold value
+PL.performance75 <- FPR_TPR(pred.lr.l>=0.75 , My)
+PL.performance75
+PL.performance25 <- FPR_TPR(pred.lr.l>=0.25 , My)
+PL.performance25
+PL.performance <- FPR_TPR(pred.lr.l>=0.45 , My)
+PL.performance
+
+PL.performance50 <- FPR_TPR(pred.lr.l>=0.50 , My)
+
+performanceTPR <- rbind("0.25" = PL.performance25, "0.45" = PL.performance,"0.50" = PL.performance50,"0.75" =PL.performance75)
+performanceTPR
+
+write.csv(performanceTPR, file = "PerformanceTPRmodel.csv", row.names = TRUE)
+
+```
+
+```{r}
+
+##Final Training of model and predictions
+
+train <- which(foldid!=1)
+
+##Logistic Regression
+m.lr <-glm(target~., data=data,family="binomial")
+pred.lr <- predict(m.lr, newdata=data[-train,], type="response")
+roccurve <-  roc(p=pred.lr, y=data[-train,"target"], bty="n")
+roccurve_m.lr <- roccurve
+
+
+## Post Lasso
+m.lr.pl <- glm(My~., data=data.min, family="binomial")
+pred.lr.pl <- predict(m.lr.pl, newdata=data.min[-train,], type="response")
+roccurve <-  roc(p=pred.lr.pl, y=data[-train,"target"], bty="n")
+roccurve_m.lr.pl <- roccurve
+
+
+# Classification Tree
+### the classification tree
+m.tree <- tree(target~ ., data=data, subset=train) 
+pred.tree <- predict(m.tree, newdata=data[-train,], type="vector")
+pred.tree <- pred.tree[,2]
+roccurve <-  roc(p=pred.tree, y=data[-train,"target"], bty="n")
+roccurve_m.tree <- roccurve
+
+```
+
+```{r}
+
+ggplot()+ 
+  geom_line(data=roccurve_m.lr,
+            aes(y=sensitivity ,x= V1,colour="Logistic Regression"),
+            size=1)+
+  geom_line(data=roccurve_m.lr.l,
+            aes(y=sensitivity,x= V1,colour="Lasso"),
+            size=1) +
+  geom_line(data=roccurve_m.lr.pl,
+            aes(y=sensitivity,x= V1,colour="Post Lasso"),
+            size=1) +
+  geom_line(data=roccurve_m.tree,
+            aes(y=sensitivity,x= V1,colour="Classification Tree"),
+            size=1) +
+  scale_color_manual(name = "Model", 
+                     values = c("Logistic Regression" = "blue", 
+                                "Lasso" = "darkgreen",
+                                "Post Lasso" = "red",
+                                "Classification Tree" = "lightblue")) +
+  
+  labs(title = "ROC Comparison", x = "False Positive Rate", y = "True Postive Rate",)
+
+```
+
+
+```{r}
+
+# PCA using prcomp() -----------------------------------------------------------
+
+str(data)
+
+data_important <- data %>% select(-c(target))
+
+
+str(data_important)
+pca <- prcomp(data_important, scale. = T, center = T) # Perform PCA
+summary(pca)
+
+
+# Percentage of variance explained by dimensions
+eigenvalue <- round(get_eigenvalue(pca), 1)
+variance.percent <- eigenvalue$variance.percent
+head(eigenvalue)
+
+plot(eigenvalue$cumulative.variance.percent)
+plot(eigenvalue$variance.percent)
+
+####
+#### Loading 1
+loadings <- pca$rotation[,1:4]
+v<-loadings[order(abs(loadings[,1]), decreasing=TRUE)[1:ncol(data_important)],1]
+loadingfit <- lapply(1:ncol(data_important), function(k) ( t(v[1:k])%*%v[1:k] - 3/4 )^2)
+v[1:which.min(loadingfit)]
+# This latent feature explains songs which lie in the pop genre which are high on energy loudness and danceability.
+
+####
+#### Loading 2
+v<-loadings[order(abs(loadings[,2]), decreasing=TRUE)[1:ncol(data_important)],2]
+loadingfit <- lapply(1:ncol(data_important), function(k) ( t(v[1:k])%*%v[1:k] - 3/4 )^2)
+v[1:which.min(loadingfit)]
+# This latent feature explains which are directly related to higher duration and higher number of sections
+####
+#### Loading 3
+v<-loadings[order(abs(loadings[,3]), decreasing=TRUE)[1:ncol(data_important)],3]
+loadingfit <- lapply(1:ncol(data_important), function(k) ( t(v[1:k])%*%v[1:k] - 3/4 )^2)
+v[3:which.min(loadingfit)]
+
+####
+#### Loading 4
+v<-loadings[order(abs(loadings[,4]), decreasing=TRUE)[1:ncol(data_important)],3]
+loadingfit <- lapply(1:ncol(data_important), function(k) ( t(v[1:k])%*%v[1:k] - 3/4 )^2)
+v[4:which.min(loadingfit)]
+
+
+loadings
+write.csv(loadings, "spotify_pca_loadings.csv",row.names = TRUE, col.names = FALSE)
+
+
+
+```
+
+
+
+
+```{r}
+
+##Cluster Analysis
+str(data_important)
+
+library(cluster)
+set.seed(123) # For reproducibility
+km5.out <- kmeans(scale(data_important), centers = 3, nstart = 35)
+km5.out$size
+### variation explained with 4 clusters
+1 - km5.out$tot.withinss/ km5.out$totss
+
+
+# Manipulate data for PCA Analyis ----------------------------------------------
+library(ggfortify) # For fortify()
+pca.fortify <- fortify(pca) # fortify() gets pca into usable format
+
+# Add group (short for color) column using k=4 and k=5 groups
+pca5.dat <- cbind(pca.fortify, group=km5.out$cluster)
+
+fviz_cluster(km5.out, data = data_important, 
+             geom = "point",
+             ellipse.type = "convex", 
+             ggtheme = theme_bw())
+
+
+
+# Plotting PC1 and PC2 using ggplot and plotly ---------------------------------
+library(ggplot2)
+library(plotly)
+# Script for plotting k=5
+gg2 <- ggplot(pca5.dat) +
+  geom_point(aes(x=PC1, y=PC2, col=factor(group), text=rownames(pca5.dat)), size=1) +
+  labs(title = "Visualizing K-Means Clusters Against First Two Principal Components") +
+  scale_color_brewer(name="", palette = "Set1")
+# Use plotly for interactivity
+plotly2 <- ggplotly(gg2, tooltip = c("text", "x", "y")) %>%
+  layout(legend = list(x=.9, y=.99))
+
+plotly2
+
+
+
+
+```
+
+
+
+
+```{r}
+
+str(pca5.dat)
+
+pca5.dat <- cbind(pca5.dat, data$target)
+pca5.dat$group <- as.factor(pca5.dat$group)
+
+ggplot(pca5.dat, aes(x = group, y = energy, color = group)) + 
+  geom_boxplot(outlier.color = "black") + 
+  theme_bw() + 
+  labs(x = "Group", y = "Song Energy", title = "Relationship between Group and Song Energy")
+
+
+ggplot(pca5.dat, aes(x = group, y = valence, color = group)) + 
+  geom_boxplot(outlier.color = "black") + 
+  theme_bw() + 
+  labs(x = "Group", y = "Song Valence", title = "Relationship between Group and Song Valence")
+
+
+ggplot(pca5.dat, aes(x = group, y = loudness, color = group)) + 
+  geom_boxplot(outlier.color = "black") + 
+  theme_bw() + 
+  labs(x = "Group", y = "Song Loudness", title = "Relationship between Group and Song Loudness")
+```
+
